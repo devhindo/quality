@@ -67,8 +67,16 @@ jobs:
             os: ubuntu-24.04
           - target: aarch64-unknown-linux-gnu
             os: ubuntu-24.04-arm
+          # Cross-compiled from the arm64 runner, not built on macos-13.
+          # The Intel macOS runners are retired: a macos-13 job sat queued
+          # for 5.5h and never got scheduled, while macos-14 finished in
+          # under 2 minutes. Apple's toolchain targets both arches, so
+          # cross-compiling here is deterministic; the tradeoff is that the
+          # binary can't be executed on the builder, so we assert its
+          # architecture instead of running it.
           - target: x86_64-apple-darwin
-            os: macos-13
+            os: macos-14
+            cross: true
           - target: aarch64-apple-darwin
             os: macos-14
           - target: x86_64-pc-windows-msvc
@@ -88,15 +96,21 @@ jobs:
       - name: Build
         run: cargo build --release --locked --target ${{ matrix.target }}
 
-      # Every target here is native, so the binary actually runs on its
-      # builder. Prove it starts before shipping it.
+      # Native targets get executed. The cross-compiled one can't be, so
+      # assert it is genuinely a Mach-O x86_64 binary rather than shipping
+      # something unverified.
       - name: Smoke test
         shell: bash
         run: |
           bin="target/${{ matrix.target }}/release/quality"
           [ "${{ runner.os }}" = "Windows" ] && bin="$bin.exe"
-          "$bin" --version
-          "$bin" --help > /dev/null
+          if [ "${{ matrix.cross }}" = "true" ]; then
+            file "$bin"
+            file "$bin" | grep -q "x86_64" || { echo "::error::not an x86_64 binary"; exit 1; }
+          else
+            "$bin" --version
+            "$bin" --help > /dev/null
+          fi
 
       # Record the actual symbol floor rather than assuming it. The README
       # states a minimum glibc; this is what proves or disproves it.
@@ -147,11 +161,40 @@ jobs:
 
   publish:
     needs: [create-release, build]
+    # Runs even if a build job failed. Requiring every platform meant one
+    # retired runner label could strand the release as an invisible draft
+    # forever, which is exactly what happened with macos-13.
+    if: always() && needs.create-release.result == 'success'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - name: Publish release
+      - name: Publish if the core platforms shipped
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release edit "${{ needs.create-release.outputs.tag }}" --draft=false
+          tag="${{ needs.create-release.outputs.tag }}"
+          have=$(gh release view "$tag" --json assets --jq '.assets[].name')
+          echo "$have"
+
+          # Missing any of these leaves most users with no binary at all,
+          # so they gate publication.
+          required="quality-x86_64-unknown-linux-gnu.tar.gz
+          quality-aarch64-unknown-linux-gnu.tar.gz
+          quality-aarch64-apple-darwin.tar.gz
+          quality-x86_64-pc-windows-msvc.zip"
+
+          missing=""
+          for a in $required; do
+            printf '%s\n' "$have" | grep -qx "$a" || missing="$missing $a"
+          done
+          if [ -n "$missing" ]; then
+            echo "::error::release missing required assets:$missing"
+            exit 1
+          fi
+
+          # Intel macOS is best-effort: reported, never fatal. install.sh
+          # gives a clear "no build for this target" if someone needs it.
+          printf '%s\n' "$have" | grep -qx "quality-x86_64-apple-darwin.tar.gz" \
+            || echo "::warning::no Intel macOS build in this release"
+
+          gh release edit "$tag" --draft=false
+          echo "published $tag"
