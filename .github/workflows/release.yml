@@ -67,16 +67,14 @@ jobs:
             os: ubuntu-24.04
           - target: aarch64-unknown-linux-gnu
             os: ubuntu-24.04-arm
-          # Cross-compiled from the arm64 runner, not built on macos-13.
-          # The Intel macOS runners are retired: a macos-13 job sat queued
-          # for 5.5h and never got scheduled, while macos-14 finished in
-          # under 2 minutes. Apple's toolchain targets both arches, so
-          # cross-compiling here is deterministic; the tradeoff is that the
-          # binary can't be executed on the builder, so we assert its
-          # architecture instead of running it.
-          - target: x86_64-apple-darwin
-            os: macos-14
-            cross: true
+          # No x86_64-apple-darwin. Not an oversight and not a runner
+          # problem: ort-sys 2.0.0-rc.13 ships no prebuilt ONNX Runtime for
+          # that target at all -
+          #   "no prebuilt binaries available for target x86_64-apple-darwin"
+          # so it fails identically whether built natively or cross-compiled.
+          # Intel Mac users have to build ONNX Runtime themselves; the README
+          # says so. (The retired macos-13 runner was a separate red herring:
+          # it never scheduled, which merely hid this error.)
           - target: aarch64-apple-darwin
             os: macos-14
           - target: x86_64-pc-windows-msvc
@@ -96,21 +94,15 @@ jobs:
       - name: Build
         run: cargo build --release --locked --target ${{ matrix.target }}
 
-      # Native targets get executed. The cross-compiled one can't be, so
-      # assert it is genuinely a Mach-O x86_64 binary rather than shipping
-      # something unverified.
+      # Every target is native, so the binary runs on its own builder.
+      # Prove it starts before shipping it.
       - name: Smoke test
         shell: bash
         run: |
           bin="target/${{ matrix.target }}/release/quality"
           [ "${{ runner.os }}" = "Windows" ] && bin="$bin.exe"
-          if [ "${{ matrix.cross }}" = "true" ]; then
-            file "$bin"
-            file "$bin" | grep -q "x86_64" || { echo "::error::not an x86_64 binary"; exit 1; }
-          else
-            "$bin" --version
-            "$bin" --help > /dev/null
-          fi
+          "$bin" --version
+          "$bin" --help > /dev/null
 
       # Record the actual symbol floor rather than assuming it. The README
       # states a minimum glibc; this is what proves or disproves it.
@@ -170,6 +162,10 @@ jobs:
       - name: Publish if the core platforms shipped
         env:
           GH_TOKEN: ${{ github.token }}
+          # This job does not check out the repo, so gh has no git remote to
+          # infer the repository from and dies with "not a git repository".
+          # Naming it explicitly is cheaper than a checkout.
+          GH_REPO: ${{ github.repository }}
         run: |
           tag="${{ needs.create-release.outputs.tag }}"
           have=$(gh release view "$tag" --json assets --jq '.assets[].name')
@@ -190,11 +186,6 @@ jobs:
             echo "::error::release missing required assets:$missing"
             exit 1
           fi
-
-          # Intel macOS is best-effort: reported, never fatal. install.sh
-          # gives a clear "no build for this target" if someone needs it.
-          printf '%s\n' "$have" | grep -qx "quality-x86_64-apple-darwin.tar.gz" \
-            || echo "::warning::no Intel macOS build in this release"
 
           gh release edit "$tag" --draft=false
           echo "published $tag"

@@ -85,10 +85,13 @@ sh install.sh
 | OS | x86_64 | arm64 |
 |---|---|---|
 | Linux (glibc 2.38+) | ✅ | ✅ |
-| macOS | ✅ | ✅ Apple Silicon |
+| macOS | ⚠️ source only | ✅ Apple Silicon |
 | Windows | ✅ | — |
 
-The glibc floor is **2.38** — Ubuntu 23.10+, Debian 13+, Fedora 39+. That isn't a choice; the prebuilt ONNX Runtime this links against is itself built against 2.38, so anything older can't link it. **Ubuntu 22.04 users need `cargo install --path .`** against a locally built runtime, or a newer distro.
+Two limits, both inherited from the prebuilt ONNX Runtime this links against rather than chosen:
+
+- **glibc 2.38+ on Linux** — Ubuntu 23.10+, Debian 13+, Fedora 39+. The runtime is built against 2.38, so older systems cannot link it. Ubuntu 22.04 is still LTS and is *not* covered; those users need to build from source against a locally built runtime.
+- **No Intel Mac binary.** `ort` publishes no prebuilt runtime for `x86_64-apple-darwin` — *"no prebuilt binaries available for target x86_64-apple-darwin"* — so there is nothing to ship. Apple Silicon is fully supported; Intel Mac users must build ONNX Runtime themselves.
 
 One self-contained binary. The 4.9 MB model is compiled into it — no Python, no ffmpeg, no ONNX Runtime install, no model download on first run.
 

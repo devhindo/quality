@@ -85,8 +85,18 @@ tmp=$(mktemp -d 2>/dev/null || mktemp -d -t quality)
 trap 'rm -rf "$tmp"' EXIT INT TERM
 
 info "Downloading $ASSET"
-fetch_to "$URL" "$tmp/$ASSET" \
-  || die "no build for $TARGET in $TAG — see https://github.com/$REPO/releases"
+if ! fetch_to "$URL" "$tmp/$ASSET"; then
+  # Intel Macs are a known gap, not a missing upload: ort ships no prebuilt
+  # ONNX Runtime for x86_64-apple-darwin, so say that plainly instead of
+  # sending people to hunt through the releases page for a file never built.
+  if [ "$TARGET" = "x86_64-apple-darwin" ]; then
+    die "no Intel Mac build available.
+ONNX Runtime publishes no prebuilt binary for x86_64-apple-darwin, so there is
+nothing to ship. Apple Silicon is supported. On an Intel Mac you will need to
+build from source: https://github.com/$REPO#install"
+  fi
+  die "no build for $TARGET in $TAG — see https://github.com/$REPO/releases"
+fi
 
 # --- verify -----------------------------------------------------------------
 if fetch_to "$URL.sha256" "$tmp/$ASSET.sha256" 2>/dev/null; then
