@@ -1,0 +1,27 @@
+/target
+/dist
+
+# Generated outputs
+*-quality.png
+*-quality.webp
+*-quality.jpg
+*-quality.jpeg
+out-test-*
+preview-*.png
+
+# Test images dropped into the repo. These are screenshots, so they can hold
+# private content (DMs, tokens, customer data). Never commit them.
+*.png
+*.jpg
+*.jpeg
+*.webp
+*.bmp
+*.tiff
+!docs/**/*.png
+!.github/**/*.png
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
