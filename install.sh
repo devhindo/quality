@@ -87,12 +87,17 @@ ASSET="${BIN}-${TARGET}.tar.gz"
 URL="https://github.com/$REPO/releases/download/$TAG/$ASSET"
 
 # Re-running this script is how you upgrade, so look for an existing install
-# first. Prefer the one we would overwrite; fall back to whatever is on PATH,
-# so we don't report "up to date" about a copy the user never sees.
+# first. Check the destination we would overwrite, then - only when no
+# destination was named - whatever is on PATH, so a default re-run finds a
+# copy installed system-wide instead of quietly adding a second one.
+#
+# That fallback must not apply to an explicit QUALITY_INSTALL_DIR: a copy in
+# some other directory is not what the caller asked us to update, and treating
+# it as one would skip the requested install entirely.
 existing=""
 if [ -x "$INSTALL_DIR/$BIN" ]; then
   existing="$INSTALL_DIR/$BIN"
-elif command -v "$BIN" >/dev/null 2>&1; then
+elif [ -z "${QUALITY_INSTALL_DIR:-}" ] && command -v "$BIN" >/dev/null 2>&1; then
   existing=$(command -v "$BIN")
 fi
 
@@ -106,8 +111,13 @@ wanted=${TAG#v}
 # saying so is more useful than a silent reinstall.
 if [ -n "$installed" ] && [ "$installed" = "$wanted" ]; then
   say ""
-  say "  ${GREEN}You already have the latest version.${OFF}"
-  say "  ${BOLD}quality $installed${OFF}"
+  # Don't claim "latest" when the caller pinned an older version and got it.
+  if [ -n "${QUALITY_VERSION:-}" ]; then
+    say "  ${GREEN}quality $installed is already installed.${OFF}"
+  else
+    say "  ${GREEN}You already have the latest version.${OFF}"
+    say "  ${BOLD}quality $installed${OFF}"
+  fi
   say "  ${DIM}$existing${OFF}"
   say ""
   exit 0
