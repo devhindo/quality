@@ -4,6 +4,7 @@
 
 **Make screenshots crisp enough to post.**
 
+[![ci](https://github.com/devhindo/quality/actions/workflows/ci.yml/badge.svg)](https://github.com/devhindo/quality/actions/workflows/ci.yml)
 [![release](https://github.com/devhindo/quality/actions/workflows/release.yml/badge.svg)](https://github.com/devhindo/quality/actions/workflows/release.yml)
 [![latest](https://img.shields.io/github/v/release/devhindo/quality?label=latest)](https://github.com/devhindo/quality/releases/latest)
 [![license](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)

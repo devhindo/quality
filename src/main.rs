@@ -27,7 +27,11 @@ fn preset(name: &str) -> Option<(u32, u64)> {
 }
 
 #[derive(Parser, Debug)]
-#[command(name = "quality", version, about = "Make screenshots crisp enough to post")]
+#[command(
+    name = "quality",
+    version,
+    about = "Make screenshots crisp enough to post"
+)]
 struct Args {
     /// Screenshot to upscale
     input: PathBuf,
@@ -67,7 +71,10 @@ fn main() -> Result<()> {
         bail!("--intensity must be 0-100, got {}", args.intensity);
     }
     let (max_dim, max_bytes) = preset(&args.target).with_context(|| {
-        format!("unknown --target {:?} (try: x, mastodon, bluesky, instagram, none)", args.target)
+        format!(
+            "unknown --target {:?} (try: x, mastodon, bluesky, instagram, none)",
+            args.target
+        )
     })?;
 
     let src = image::open(&args.input)
@@ -76,7 +83,10 @@ fn main() -> Result<()> {
     let rgb = src.to_rgb8();
     let alpha = has_alpha(&src).then(|| src.to_rgba8());
 
-    eprintln!("input   {sw}x{sh}  ({:.2} MP)", (sw as f64 * sh as f64) / 1e6);
+    eprintln!(
+        "input   {sw}x{sh}  ({:.2} MP)",
+        (sw as f64 * sh as f64) / 1e6
+    );
 
     // 1. Super-resolve 4x. Tiling keeps peak memory bounded on large inputs.
     let t0 = Instant::now();
@@ -84,7 +94,12 @@ fn main() -> Result<()> {
         .commit_from_memory(MODEL)
         .context("failed to load embedded super-resolution model")?;
     let sr = super_resolve(&mut session, &rgb, args.tile)?;
-    eprintln!("upscale {}x{}  in {:.1}s", sr.width(), sr.height(), t0.elapsed().as_secs_f64());
+    eprintln!(
+        "upscale {}x{}  in {:.1}s",
+        sr.width(),
+        sr.height(),
+        t0.elapsed().as_secs_f64()
+    );
 
     // 2. Blend back toward Lanczos. The model raises local contrast ~29%,
     //    which blows out whites; this dials that back without losing detail.
@@ -105,10 +120,11 @@ fn main() -> Result<()> {
     }
 
     // 5. Encode.
-    let path = args.output.unwrap_or_else(|| default_output(&args.input, args.png));
+    let path = args
+        .output
+        .unwrap_or_else(|| default_output(&args.input, args.png));
     let bytes = encode(&final_img, &path, args.quality)?;
-    std::fs::write(&path, &bytes)
-        .with_context(|| format!("could not write {}", path.display()))?;
+    std::fs::write(&path, &bytes).with_context(|| format!("could not write {}", path.display()))?;
 
     let over = bytes.len() as u64 > max_bytes;
     eprintln!(
@@ -117,7 +133,11 @@ fn main() -> Result<()> {
         final_img.height(),
         bytes.len() as f64 / 1e6,
         path.display(),
-        if over { "  [WARNING: over platform size limit]" } else { "" }
+        if over {
+            "  [WARNING: over platform size limit]"
+        } else {
+            ""
+        }
     );
     if over {
         eprintln!(
@@ -160,7 +180,11 @@ fn super_resolve(session: &mut Session, img: &RgbImage, tile: u32) -> Result<Rgb
             let (cx, cy) = ((x0 - ex0) * SCALE, (y0 - ey0) * SCALE);
             for y in 0..(y1 - y0) * SCALE {
                 for x in 0..(x1 - x0) * SCALE {
-                    out.put_pixel(x0 * SCALE + x, y0 * SCALE + y, *res.get_pixel(cx + x, cy + y));
+                    out.put_pixel(
+                        x0 * SCALE + x,
+                        y0 * SCALE + y,
+                        *res.get_pixel(cx + x, cy + y),
+                    );
                 }
             }
         }
@@ -204,7 +228,9 @@ fn blend(sr: &RgbImage, lanczos: &RgbImage, k: f32) -> RgbImage {
     let mut out = sr.clone();
     for (o, l) in out.pixels_mut().zip(lanczos.pixels()) {
         for c in 0..3 {
-            o[c] = (o[c] as f32 * k + l[c] as f32 * (1.0 - k)).round().clamp(0.0, 255.0) as u8;
+            o[c] = (o[c] as f32 * k + l[c] as f32 * (1.0 - k))
+                .round()
+                .clamp(0.0, 255.0) as u8;
         }
     }
     out
@@ -214,7 +240,9 @@ fn saturate(img: &mut RgbImage, amount: f32) {
     for p in img.pixels_mut() {
         let lum = 0.2126 * p[0] as f32 + 0.7152 * p[1] as f32 + 0.0722 * p[2] as f32;
         for c in 0..3 {
-            p[c] = (lum + (p[c] as f32 - lum) * amount).round().clamp(0.0, 255.0) as u8;
+            p[c] = (lum + (p[c] as f32 - lum) * amount)
+                .round()
+                .clamp(0.0, 255.0) as u8;
         }
     }
 }
@@ -225,7 +253,10 @@ fn fit(img: RgbImage, max_dim: u32) -> RgbImage {
         return img;
     }
     let scale = max_dim as f64 / w.max(h) as f64;
-    let (nw, nh) = (((w as f64 * scale).round() as u32).max(1), ((h as f64 * scale).round() as u32).max(1));
+    let (nw, nh) = (
+        ((w as f64 * scale).round() as u32).max(1),
+        ((h as f64 * scale).round() as u32).max(1),
+    );
     image::imageops::resize(&img, nw, nh, FilterType::Lanczos3)
 }
 
@@ -241,13 +272,20 @@ fn reattach_alpha(img: DynamicImage, src_rgba: &RgbaImage) -> DynamicImage {
 }
 
 fn default_output(input: &Path, png: bool) -> PathBuf {
-    let stem = input.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_else(|| "out".into());
+    let stem = input
+        .file_stem()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "out".into());
     let ext = if png { "png" } else { "webp" };
     input.with_file_name(format!("{stem}-quality.{ext}"))
 }
 
 fn encode(img: &DynamicImage, path: &Path, quality: f32) -> Result<Vec<u8>> {
-    let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("webp").to_ascii_lowercase();
+    let ext = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("webp")
+        .to_ascii_lowercase();
     match ext.as_str() {
         "webp" => {
             let mem = match img {
@@ -268,5 +306,114 @@ fn encode(img: &DynamicImage, path: &Path, quality: f32) -> Result<Vec<u8>> {
             img.write_to(&mut buf, fmt)?;
             Ok(buf.into_inner())
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn presets_are_case_insensitive_and_aliased() {
+        assert_eq!(preset("x"), preset("X"));
+        assert_eq!(preset("x"), preset("twitter"));
+        assert_eq!(preset("instagram"), preset("ig"));
+        assert_eq!(preset("none"), preset("full"));
+        assert!(preset("tumblr").is_none());
+    }
+
+    #[test]
+    fn bluesky_is_the_tightest_ceiling() {
+        // Bluesky's 1 MB cap is what forces the WebP default, so if it ever
+        // stops being the strictest, that encoding tradeoff needs revisiting.
+        let (dim, bytes) = preset("bluesky").unwrap();
+        assert_eq!((dim, bytes), (2000, 1_000_000));
+        for other in ["x", "mastodon", "instagram"] {
+            assert!(preset(other).unwrap().1 > bytes);
+        }
+    }
+
+    #[test]
+    fn fit_preserves_aspect_ratio_and_caps_long_edge() {
+        let wide = RgbImage::new(4000, 1000);
+        assert_eq!(fit(wide, 2000).dimensions(), (2000, 500));
+
+        let tall = RgbImage::new(1000, 4000);
+        assert_eq!(fit(tall, 2000).dimensions(), (500, 2000));
+    }
+
+    #[test]
+    fn fit_never_upscales() {
+        let small = RgbImage::new(100, 50);
+        assert_eq!(fit(small, 4096).dimensions(), (100, 50));
+    }
+
+    #[test]
+    fn fit_never_collapses_a_dimension_to_zero() {
+        // An extreme aspect ratio rounds the short edge toward 0; clamping to
+        // 1 is what stops image::resize panicking on a zero-sized buffer.
+        let sliver = RgbImage::new(10000, 3);
+        let out = fit(sliver, 100);
+        assert!(out.height() >= 1, "height collapsed to {}", out.height());
+    }
+
+    #[test]
+    fn default_output_swaps_extension_and_keeps_directory() {
+        assert_eq!(
+            default_output(Path::new("/tmp/shot.png"), false),
+            PathBuf::from("/tmp/shot-quality.webp")
+        );
+        assert_eq!(
+            default_output(Path::new("/tmp/shot.jpeg"), true),
+            PathBuf::from("/tmp/shot-quality.png")
+        );
+        // Names containing dots must not be truncated at the first one.
+        assert_eq!(
+            default_output(Path::new("v1.2.final.png"), false),
+            PathBuf::from("v1.2.final-quality.webp")
+        );
+    }
+
+    #[test]
+    fn saturate_at_100_percent_is_a_no_op() {
+        let mut img = RgbImage::new(2, 1);
+        img.put_pixel(0, 0, image::Rgb([10, 200, 90]));
+        img.put_pixel(1, 0, image::Rgb([255, 0, 0]));
+        let before = img.clone();
+        saturate(&mut img, 1.0);
+        assert_eq!(img, before);
+    }
+
+    #[test]
+    fn saturate_at_zero_produces_grey() {
+        let mut img = RgbImage::new(1, 1);
+        img.put_pixel(0, 0, image::Rgb([10, 200, 90]));
+        saturate(&mut img, 0.0);
+        let p = img.get_pixel(0, 0);
+        assert_eq!(p[0], p[1]);
+        assert_eq!(p[1], p[2]);
+    }
+
+    #[test]
+    fn blend_endpoints_select_each_source() {
+        let mut sr = RgbImage::new(1, 1);
+        sr.put_pixel(0, 0, image::Rgb([200, 200, 200]));
+        let mut lz = RgbImage::new(1, 1);
+        lz.put_pixel(0, 0, image::Rgb([100, 100, 100]));
+
+        assert_eq!(*blend(&sr, &lz, 1.0).get_pixel(0, 0), image::Rgb([200; 3]));
+        assert_eq!(*blend(&sr, &lz, 0.0).get_pixel(0, 0), image::Rgb([100; 3]));
+        assert_eq!(*blend(&sr, &lz, 0.5).get_pixel(0, 0), image::Rgb([150; 3]));
+    }
+
+    #[test]
+    fn to_u8_clamps_out_of_range_model_output() {
+        // Model output is unbounded, so values outside 0..1 are normal and
+        // must not wrap around when cast to u8.
+        assert_eq!(to_u8(-5.0), 0);
+        assert_eq!(to_u8(0.0), 0);
+        assert_eq!(to_u8(1.0), 255);
+        assert_eq!(to_u8(9.9), 255);
+        assert_eq!(to_u8(f32::NAN), 0);
     }
 }

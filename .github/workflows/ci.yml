@@ -1,0 +1,67 @@
+name: ci
+
+# release.yml only fires on tags, so before this file ordinary commits ran
+# no checks at all. That is how a target that could not even link reached a
+# release run.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  lint:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust
+        run: |
+          rustup toolchain install stable --profile minimal \
+            --component rustfmt,clippy --no-self-update
+      - run: cargo fmt --check
+      - run: cargo clippy --locked --all-targets -- -D warnings
+
+  test:
+    # The same platforms release.yml ships. Tagging should never be the first
+    # time we learn a target does not build - that is exactly how the glibc
+    # 2.38 link failure got as far as a release.
+    #
+    # Debug builds, not release: linking is what catches these breakages and
+    # it happens in debug too, without paying for LTO on every push.
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-24.04
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-24.04-arm
+          - target: aarch64-apple-darwin
+            os: macos-14
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        run: |
+          rustup toolchain install stable --profile minimal --no-self-update
+          rustup target add ${{ matrix.target }}
+
+      - run: cargo test --locked --target ${{ matrix.target }}
+
+      - name: Smoke test
+        shell: bash
+        run: |
+          bin="target/${{ matrix.target }}/debug/quality"
+          [ "${{ runner.os }}" = "Windows" ] && bin="$bin.exe"
+          "$bin" --version
+          "$bin" --help > /dev/null
