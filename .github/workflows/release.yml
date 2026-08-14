@@ -1,0 +1,146 @@
+name: release
+
+# Tag-triggered. The release is created as a draft, filled in by the matrix,
+# and only published once every platform has succeeded - so install.sh can
+# never resolve a half-uploaded release.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to build (must already exist)"
+        required: true
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  create-release:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: tag
+        run: echo "tag=${{ github.event.inputs.tag || github.ref_name }}" >> "$GITHUB_OUTPUT"
+
+      # A tag that disagrees with Cargo.toml ships a binary whose --version
+      # lies. Fail here rather than after five platform builds.
+      - name: Check tag matches Cargo.toml version
+        run: |
+          crate=$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)
+          tag="${{ steps.tag.outputs.tag }}"
+          if [ "v$crate" != "$tag" ]; then
+            echo "::error::tag $tag != Cargo.toml version v$crate"
+            exit 1
+          fi
+          echo "version $crate OK"
+
+      - name: Create draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view "${{ steps.tag.outputs.tag }}" >/dev/null 2>&1 \
+            || gh release create "${{ steps.tag.outputs.tag }}" \
+                 --draft \
+                 --title "${{ steps.tag.outputs.tag }}" \
+                 --generate-notes
+
+  build:
+    needs: create-release
+    # One platform failing shouldn't discard four good builds; the draft
+    # stays unpublished either way.
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Built on the oldest runner we support so the glibc requirement
+          # stays low - the binary links libstdc++/libgcc/libm/libc.
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-22.04
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-22.04-arm
+          - target: x86_64-apple-darwin
+            os: macos-13
+          - target: aarch64-apple-darwin
+            os: macos-14
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.create-release.outputs.tag }}
+
+      - name: Install Rust
+        run: |
+          rustup toolchain install stable --profile minimal --no-self-update
+          rustup target add ${{ matrix.target }}
+
+      - name: Build
+        run: cargo build --release --locked --target ${{ matrix.target }}
+
+      # Every target here is native, so the binary actually runs on its
+      # builder. Prove it starts before shipping it.
+      - name: Smoke test
+        shell: bash
+        run: |
+          bin="target/${{ matrix.target }}/release/quality"
+          [ "${{ runner.os }}" = "Windows" ] && bin="$bin.exe"
+          "$bin" --version
+          "$bin" --help > /dev/null
+
+      - name: Package
+        shell: bash
+        run: |
+          name="quality-${{ matrix.target }}"
+          mkdir -p "dist/$name"
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            cp "target/${{ matrix.target }}/release/quality.exe" "dist/$name/"
+          else
+            cp "target/${{ matrix.target }}/release/quality" "dist/$name/"
+          fi
+          cp README.md LICENSE "dist/$name/"
+
+          cd dist
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            7z a "$name.zip" "$name" > /dev/null
+            asset="$name.zip"
+          else
+            tar czf "$name.tar.gz" "$name"
+            asset="$name.tar.gz"
+          fi
+
+          # install.sh fetches <asset>.sha256 and compares before unpacking.
+          if command -v sha256sum > /dev/null; then
+            sha256sum "$asset" | cut -d' ' -f1 > "$asset.sha256"
+          else
+            shasum -a 256 "$asset" | cut -d' ' -f1 > "$asset.sha256"
+          fi
+          echo "ASSET=$asset" >> "$GITHUB_ENV"
+          ls -la
+
+      - name: Upload to release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release upload "${{ needs.create-release.outputs.tag }}" \
+            "dist/$ASSET" "dist/$ASSET.sha256" --clobber
+
+  publish:
+    needs: [create-release, build]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release edit "${{ needs.create-release.outputs.tag }}" --draft=false

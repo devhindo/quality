@@ -2,9 +2,14 @@
 name = "quality"
 version = "0.1.0"
 edition = "2024"
+# Edition 2024 needs 1.85. Stated so cargo reports it instead of failing
+# with a confusing parse error on an older toolchain.
+rust-version = "1.85"
 description = "Make screenshots crisp enough to post"
 license = "MIT"
 readme = "README.md"
+repository = "https://github.com/devhindo/quality"
+homepage = "https://github.com/devhindo/quality"
 keywords = ["screenshot", "upscale", "super-resolution", "cli"]
 categories = ["command-line-utilities", "multimedia::images"]
 
