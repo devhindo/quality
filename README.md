@@ -35,11 +35,18 @@ Anywhere that image gets displayed larger than its native size, something has to
 curl -fsSL https://raw.githubusercontent.com/devhindo/quality/main/install.sh | sh
 ```
 
-Installs to `~/.local/bin` and never asks for `sudo`. For a system-wide install:
+That installs to `~/.local/bin` for your user only, and never asks for `sudo`.
+
+To install system-wide instead — same script, only the destination differs:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/devhindo/quality/main/install.sh | sudo QUALITY_INSTALL_DIR=/usr/local/bin sh
+curl -fsSL https://raw.githubusercontent.com/devhindo/quality/main/install.sh | sudo env QUALITY_INSTALL_DIR=/usr/local/bin sh
 ```
+
+`sudo env VAR=…` rather than `sudo VAR=…`: sudo's default `env_reset` strips
+command-line variable assignments it doesn't recognise, so the plain form would
+silently fall back to installing under root's home instead. Running `env` as
+root sets the variable after sudo, where nothing can filter it.
 
 <details>
 <summary><b>Uninstall</b></summary>

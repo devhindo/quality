@@ -60,6 +60,19 @@ esac
 
 TARGET="${arch_part}-${os_part}"
 
+# Someone running this under sudo almost certainly means "install it for
+# everyone", but sudo's env_reset drops a plain `sudo QUALITY_INSTALL_DIR=... sh`
+# assignment and resets HOME, so we would quietly land in /root/.local/bin.
+# Warn rather than fail: running as root is legitimate in a container.
+if [ "$(id -u 2>/dev/null || echo 1)" = "0" ] && [ -z "${QUALITY_INSTALL_DIR:-}" ]; then
+  say ""
+  printf '%swarning:%s running as root with no QUALITY_INSTALL_DIR set.\n' "$RED" "$OFF"
+  say "  Installing to $INSTALL_DIR, which is root's home, not a system path."
+  say "  For a system-wide install, cancel and use:"
+  say ""
+  say "    ${DIM}... | sudo env QUALITY_INSTALL_DIR=/usr/local/bin sh${OFF}"
+fi
+
 # --- resolve version --------------------------------------------------------
 if [ -n "${QUALITY_VERSION:-}" ]; then
   TAG="$QUALITY_VERSION"
