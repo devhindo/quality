@@ -86,8 +86,39 @@ fi
 ASSET="${BIN}-${TARGET}.tar.gz"
 URL="https://github.com/$REPO/releases/download/$TAG/$ASSET"
 
+# Re-running this script is how you upgrade, so look for an existing install
+# first. Prefer the one we would overwrite; fall back to whatever is on PATH,
+# so we don't report "up to date" about a copy the user never sees.
+existing=""
+if [ -x "$INSTALL_DIR/$BIN" ]; then
+  existing="$INSTALL_DIR/$BIN"
+elif command -v "$BIN" >/dev/null 2>&1; then
+  existing=$(command -v "$BIN")
+fi
+
+installed=""
+if [ -n "$existing" ]; then
+  installed=$("$existing" --version 2>/dev/null | awk '{print $NF}')
+fi
+wanted=${TAG#v}
+
+# Nothing to do. Downloading an identical binary would be pure waste, and
+# saying so is more useful than a silent reinstall.
+if [ -n "$installed" ] && [ "$installed" = "$wanted" ]; then
+  say ""
+  say "  ${GREEN}You already have the latest version.${OFF}"
+  say "  ${BOLD}quality $installed${OFF}"
+  say "  ${DIM}$existing${OFF}"
+  say ""
+  exit 0
+fi
+
 say ""
-say "  ${BOLD}quality${OFF} $TAG"
+if [ -n "$installed" ]; then
+  say "  ${BOLD}quality${OFF} $installed ${DIM}->${OFF} ${BOLD}$wanted${OFF}"
+else
+  say "  ${BOLD}quality${OFF} $TAG"
+fi
 say "  ${DIM}target  $TARGET${OFF}"
 say "  ${DIM}install $INSTALL_DIR/$BIN${OFF}"
 say ""
@@ -147,7 +178,12 @@ chmod 755 "$src"
 mv -f "$src" "$INSTALL_DIR/.$BIN.new" || die "cannot write to $INSTALL_DIR"
 mv -f "$INSTALL_DIR/.$BIN.new" "$INSTALL_DIR/$BIN"
 
-info "Installed $("$INSTALL_DIR/$BIN" --version 2>/dev/null || echo "$BIN $TAG")"
+now=$("$INSTALL_DIR/$BIN" --version 2>/dev/null || echo "$BIN $TAG")
+if [ -n "$installed" ]; then
+  info "Upgraded to $now"
+else
+  info "Installed $now"
+fi
 
 # --- PATH check -------------------------------------------------------------
 case ":$PATH:" in

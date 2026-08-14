@@ -14,6 +14,9 @@ use std::time::Instant;
 const MODEL: &[u8] = include_bytes!("../models/general-x4v3.onnx");
 const SCALE: u32 = 4;
 
+/// Formats we can both decode and encode. Anything else is rejected up front.
+const SUPPORTED: [&str; 7] = ["png", "jpg", "jpeg", "bmp", "tif", "tiff", "webp"];
+
 /// Upload ceilings: (max long edge px, max file bytes).
 fn preset(name: &str) -> Option<(u32, u64)> {
     Some(match name.to_ascii_lowercase().as_str() {
@@ -36,7 +39,8 @@ struct Args {
     /// Screenshot to upscale
     input: PathBuf,
 
-    /// Output file (default: <input>-quality.webp)
+    /// Output name, without an extension (default: <input>-quality).
+    /// The extension always follows the chosen format.
     #[arg(short, long)]
     output: Option<PathBuf>,
 
@@ -52,11 +56,15 @@ struct Args {
     #[arg(short, long, default_value_t = 92)]
     saturation: u16,
 
-    /// Write lossless PNG instead of WebP
-    #[arg(long)]
+    /// Force lossless PNG output regardless of the input's format
+    #[arg(long, conflicts_with = "webp")]
     png: bool,
 
-    /// WebP quality, 0-100
+    /// Force WebP output regardless of the input's format
+    #[arg(long)]
+    webp: bool,
+
+    /// WebP quality, 0-100 (ignored for lossless formats)
     #[arg(short, long, default_value_t = 90.0)]
     quality: f32,
 
@@ -76,6 +84,24 @@ fn main() -> Result<()> {
             args.target
         )
     })?;
+
+    // Reject an unusable extension before the upscale, not after: the encode
+    // step is the last thing that runs, and failing there would waste a full
+    // minute of inference on a large screenshot.
+    let in_ext = ext_of(&args.input);
+    if !SUPPORTED.contains(&in_ext.as_str()) {
+        let what = if in_ext.is_empty() {
+            "no file extension".to_string()
+        } else {
+            format!("unsupported format {in_ext:?}")
+        };
+        bail!(
+            "{}: {}\nsupported formats: {}",
+            args.input.display(),
+            what,
+            SUPPORTED.join(", ")
+        );
+    }
 
     let src = image::open(&args.input)
         .with_context(|| format!("could not read {}", args.input.display()))?;
@@ -120,9 +146,11 @@ fn main() -> Result<()> {
     }
 
     // 5. Encode.
-    let path = args
-        .output
-        .unwrap_or_else(|| default_output(&args.input, args.png));
+    let ext = output_ext(&in_ext, args.png, args.webp);
+    let path = match &args.output {
+        Some(name) => output_path(name, &ext),
+        None => default_output(&args.input, &ext),
+    };
     let bytes = encode(&final_img, &path, args.quality)?;
     std::fs::write(&path, &bytes).with_context(|| format!("could not write {}", path.display()))?;
 
@@ -140,11 +168,23 @@ fn main() -> Result<()> {
         }
     );
     if over {
+        // --quality only reaches the WebP encoder, so suggesting it for a
+        // lossless output would send someone chasing a knob that does nothing.
+        let written = path
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("")
+            .to_ascii_lowercase();
+        let fix = if written == "webp" {
+            format!("try --quality {}", (args.quality - 10.0).max(50.0))
+        } else {
+            format!("{written} is lossless here, so --quality will not help; try --webp")
+        };
         eprintln!(
-            "        {} allows {:.1} MB; try --quality {} or --target bluesky",
+            "        {} allows {:.1} MB; {}",
             args.target,
             max_bytes as f64 / 1e6,
-            (args.quality - 10.0).max(50.0)
+            fix
         );
     }
     Ok(())
@@ -271,12 +311,44 @@ fn reattach_alpha(img: DynamicImage, src_rgba: &RgbaImage) -> DynamicImage {
     DynamicImage::ImageRgba8(out)
 }
 
-fn default_output(input: &Path, png: bool) -> PathBuf {
+fn ext_of(p: &Path) -> String {
+    p.extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or_default()
+        .to_ascii_lowercase()
+}
+
+/// The format to write: the input's, unless a flag overrides it.
+fn output_ext(in_ext: &str, force_png: bool, force_webp: bool) -> String {
+    if force_png {
+        "png".into()
+    } else if force_webp {
+        "webp".into()
+    } else {
+        in_ext.to_string()
+    }
+}
+
+/// Build the path for an explicit `-o NAME`. NAME is a name, not a filename,
+/// so the extension comes from the chosen format. A supported image extension
+/// typed anyway is replaced rather than appended, so `-o out.png` can never
+/// produce `out.png.png`.
+fn output_path(name: &Path, ext: &str) -> PathBuf {
+    if SUPPORTED.contains(&ext_of(name).as_str()) {
+        name.with_extension(ext)
+    } else {
+        // Not with_extension: that would turn `report.v2` into `report.png`.
+        let mut s = name.as_os_str().to_owned();
+        s.push(format!(".{ext}"));
+        PathBuf::from(s)
+    }
+}
+
+fn default_output(input: &Path, ext: &str) -> PathBuf {
     let stem = input
         .file_stem()
         .map(|s| s.to_string_lossy().into_owned())
         .unwrap_or_else(|| "out".into());
-    let ext = if png { "png" } else { "webp" };
     input.with_file_name(format!("{stem}-quality.{ext}"))
 }
 
@@ -358,19 +430,83 @@ mod tests {
     }
 
     #[test]
-    fn default_output_swaps_extension_and_keeps_directory() {
+    fn default_output_keeps_directory_and_full_stem() {
         assert_eq!(
-            default_output(Path::new("/tmp/shot.png"), false),
-            PathBuf::from("/tmp/shot-quality.webp")
-        );
-        assert_eq!(
-            default_output(Path::new("/tmp/shot.jpeg"), true),
+            default_output(Path::new("/tmp/shot.png"), "png"),
             PathBuf::from("/tmp/shot-quality.png")
         );
         // Names containing dots must not be truncated at the first one.
         assert_eq!(
-            default_output(Path::new("v1.2.final.png"), false),
-            PathBuf::from("v1.2.final-quality.webp")
+            default_output(Path::new("v1.2.final.png"), "png"),
+            PathBuf::from("v1.2.final-quality.png")
+        );
+    }
+
+    #[test]
+    fn output_format_mirrors_the_input_extension() {
+        for ext in SUPPORTED {
+            assert_eq!(output_ext(ext, false, false), ext, "for .{ext}");
+        }
+    }
+
+    #[test]
+    fn extensions_are_read_case_insensitively() {
+        assert_eq!(ext_of(Path::new("SHOT.PNG")), "png");
+        assert_eq!(ext_of(Path::new("shot.JPeG")), "jpeg");
+        assert_eq!(ext_of(Path::new("screenshot")), "");
+    }
+
+    #[test]
+    fn unsupported_extensions_are_not_silently_accepted() {
+        // These must be rejected by main() up front rather than mapped to some
+        // other format; the check is `SUPPORTED.contains`, so pin its contents.
+        for ext in ["avif", "gif", "svg", "heic", "", "gz"] {
+            assert!(!SUPPORTED.contains(&ext), "{ext:?} must not be supported");
+        }
+    }
+
+    #[test]
+    fn explicit_format_flags_override_the_input_extension() {
+        assert_eq!(output_ext("png", false, true), "webp");
+        assert_eq!(output_ext("webp", true, false), "png");
+        assert_eq!(output_ext("jpg", true, false), "png");
+    }
+
+    #[test]
+    fn explicit_output_name_gets_the_chosen_extension() {
+        assert_eq!(
+            output_path(Path::new("myshot"), "png"),
+            PathBuf::from("myshot.png")
+        );
+        assert_eq!(
+            output_path(Path::new("out/dir/myshot"), "webp"),
+            PathBuf::from("out/dir/myshot.webp")
+        );
+    }
+
+    #[test]
+    fn explicit_output_name_never_doubles_an_extension() {
+        // Someone will type -o out.png despite the docs.
+        assert_eq!(
+            output_path(Path::new("out.png"), "png"),
+            PathBuf::from("out.png")
+        );
+        assert_eq!(
+            output_path(Path::new("out.jpg"), "webp"),
+            PathBuf::from("out.webp")
+        );
+    }
+
+    #[test]
+    fn explicit_output_name_keeps_dots_that_are_not_extensions() {
+        // with_extension would mangle these into report.png / v1.png.
+        assert_eq!(
+            output_path(Path::new("report.v2"), "png"),
+            PathBuf::from("report.v2.png")
+        );
+        assert_eq!(
+            output_path(Path::new("v1.2.final"), "webp"),
+            PathBuf::from("v1.2.final.webp")
         );
     }
 

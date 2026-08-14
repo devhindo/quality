@@ -35,18 +35,21 @@ Anywhere that image gets displayed larger than its native size, something has to
 curl -fsSL https://raw.githubusercontent.com/devhindo/quality/main/install.sh | sh
 ```
 
-That installs to `~/.local/bin` for your user only, and never asks for `sudo`.
+Installs to `~/.local/bin`, and never asks for `sudo`.
 
-To install system-wide instead — same script, only the destination differs:
+**That same command is also how you upgrade.** Run it again whenever you like:
+it resolves the latest release and replaces the binary in place. If you're
+already current it says so and exits without downloading anything.
 
-```sh
-curl -fsSL https://raw.githubusercontent.com/devhindo/quality/main/install.sh | sudo env QUALITY_INSTALL_DIR=/usr/local/bin sh
+```
+  You already have the latest version.
+  quality 0.2.0
+  /home/you/.local/bin/quality
 ```
 
-`sudo env VAR=…` rather than `sudo VAR=…`: sudo's default `env_reset` strips
-command-line variable assignments it doesn't recognise, so the plain form would
-silently fall back to installing under root's home instead. Running `env` as
-root sets the variable after sudo, where nothing can filter it.
+The replacement is atomic — the new binary is written alongside and renamed
+over the old one — so an upgrade can't leave you with a half-written `quality`
+even if it's running at the time.
 
 <details>
 <summary><b>Uninstall</b></summary>
@@ -60,7 +63,20 @@ curl -fsSL https://raw.githubusercontent.com/devhindo/quality/main/uninstall.sh 
 <details>
 <summary><b>Other install options</b></summary>
 
-**Pin a version**
+**System-wide**, for all users, instead of just you:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/devhindo/quality/main/install.sh | sudo env QUALITY_INSTALL_DIR=/usr/local/bin sh
+```
+
+`sudo env VAR=…` rather than `sudo VAR=…`: sudo's default `env_reset` strips
+command-line variable assignments it doesn't recognise, so the plain form would
+silently install under root's home instead. Running `env` as root sets the
+variable after sudo, where nothing can filter it. If you install here, use the
+same command to upgrade, or you'll end up with two copies and `PATH` deciding
+which one wins.
+
+**Pin a version**, or go back to an older one:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/devhindo/quality/main/install.sh | QUALITY_VERSION=v0.1.0 sh
@@ -106,17 +122,29 @@ Two limits, both inherited from the prebuilt ONNX Runtime this links against rat
 ## Usage
 
 ```sh
-quality shot.png                # -> shot-quality.webp
-quality shot.png --png          # lossless PNG instead
+quality shot.png                # -> shot-quality.png
+quality shot.jpg                # -> shot-quality.jpg
+quality shot.png -o myshot      # -> myshot.png
+quality shot.png --webp         # force WebP regardless of the input
 quality shot.png -i 40          # gentler ML effect
-quality shot.png -o out.webp    # explicit output path
 ```
 
 ```
 input   296x423  (0.13 MP)
 upscale 1184x1692  in 3.1s
-output  1184x1692  0.09 MB  -> shot-quality.webp
+output  1184x1692  1.72 MB  -> shot-quality.png
 ```
+
+**The output format follows the input.** A PNG in gives a PNG out; a JPEG gives
+a JPEG. Override with `--png` or `--webp`.
+
+`-o` takes a *name*, not a filename — the extension comes from the format, so
+`-o myshot` writes `myshot.png` for a PNG input. Typing an extension anyway is
+harmless; it's replaced rather than appended.
+
+Supported formats are `png`, `jpg`, `jpeg`, `bmp`, `tif`, `tiff`, `webp`.
+Anything else is rejected immediately, before the slow upscale runs, rather
+than failing at the encode step a minute later.
 
 ### Flags
 
@@ -125,10 +153,11 @@ output  1184x1692  0.09 MB  -> shot-quality.webp
 | `-t, --target` | `x` | Size budget preset to fit within — run `quality --help` for the list |
 | `-i, --intensity` | `60` | ML strength, 0–100. Lower is softer and closer to plain Lanczos |
 | `-s, --saturation` | `92` | Saturation percent; `100` leaves colour untouched |
-| `-q, --quality` | `90` | WebP quality |
-| `--png` | off | Write lossless PNG instead of WebP |
+| `-q, --quality` | `90` | WebP quality; ignored for lossless formats |
+| `--png` | off | Force lossless PNG, whatever the input was |
+| `--webp` | off | Force WebP, whatever the input was |
 | `--tile` | `384` | Inference tile size. Lower it if you run out of memory |
-| `-o, --output` | `<input>-quality.webp` | Output path; extension picks the format |
+| `-o, --output` | `<input>-quality` | Output **name**, without an extension |
 
 ### Fitting a size budget
 
