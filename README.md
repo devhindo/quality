@@ -84,9 +84,11 @@ sh install.sh
 
 | OS | x86_64 | arm64 |
 |---|---|---|
-| Linux (glibc 2.35+) | ✅ | ✅ |
+| Linux (glibc 2.38+) | ✅ | ✅ |
 | macOS | ✅ | ✅ Apple Silicon |
 | Windows | ✅ | — |
+
+The glibc floor is **2.38** — Ubuntu 23.10+, Debian 13+, Fedora 39+. That isn't a choice; the prebuilt ONNX Runtime this links against is itself built against 2.38, so anything older can't link it. **Ubuntu 22.04 users need `cargo install --path .`** against a locally built runtime, or a newer distro.
 
 One self-contained binary. The 4.9 MB model is compiled into it — no Python, no ffmpeg, no ONNX Runtime install, no model download on first run.
 

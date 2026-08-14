@@ -59,12 +59,14 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # Built on the oldest runner we support so the glibc requirement
-          # stays low - the binary links libstdc++/libgcc/libm/libc.
+          # 24.04, not 22.04. The prebuilt ONNX Runtime that ort downloads is
+          # itself built against glibc 2.38+ and libstdc++ 13+ (it needs
+          # __isoc23_strtoll and _M_replace_cold), so linking on 22.04's
+          # glibc 2.35 fails outright. The floor is ORT's, not ours.
           - target: x86_64-unknown-linux-gnu
-            os: ubuntu-22.04
+            os: ubuntu-24.04
           - target: aarch64-unknown-linux-gnu
-            os: ubuntu-22.04-arm
+            os: ubuntu-24.04-arm
           - target: x86_64-apple-darwin
             os: macos-13
           - target: aarch64-apple-darwin
@@ -95,6 +97,15 @@ jobs:
           [ "${{ runner.os }}" = "Windows" ] && bin="$bin.exe"
           "$bin" --version
           "$bin" --help > /dev/null
+
+      # Record the actual symbol floor rather than assuming it. The README
+      # states a minimum glibc; this is what proves or disproves it.
+      - name: Report glibc floor
+        if: runner.os == 'Linux'
+        run: |
+          bin="target/${{ matrix.target }}/release/quality"
+          echo "max GLIBC:   $(objdump -T "$bin" | grep -oP 'GLIBC_[0-9.]+'   | sort -uV | tail -1)"
+          echo "max GLIBCXX: $(objdump -T "$bin" | grep -oP 'GLIBCXX_[0-9.]+' | sort -uV | tail -1)"
 
       - name: Package
         shell: bash
