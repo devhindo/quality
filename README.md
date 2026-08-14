@@ -17,17 +17,15 @@ quality screenshot.png
 
 ---
 
-## Why your Linux screenshots look worse than everyone's Mac ones
+## Why screenshots go soft when you share them
 
-It isn't your compression settings, and it isn't the screenshot tool. It's pixel count.
+A screenshot captured on a 1× display contains exactly as many pixels as the region you grabbed — a 296×423 window is 296×423 pixels, and that's all the information there is.
 
-macOS captures a Retina display, so a 296×423 region on screen becomes **592×846 actual pixels** in the file. On a 1× Linux display, the same region is **296×423**. When Twitter renders that in a timeline it has to *upscale* it — and browser upscaling is bilinear, which is mush.
+Anywhere that image gets displayed larger than its native size, something has to *upscale* it. That upscaling is almost always bilinear, which is mush: soft text, smeared edges, muddy UI chrome. Zoom in and it falls apart completely.
 
-So the Mac user uploads an image with 4× the information and the browser downsamples it, which looks sharp. You upload the smaller one and the browser stretches it, which looks soft. Same screen, same app, same content.
+**Sharpening cannot fix this.** Lanczos, unsharp mask, and every filter of that family only redistribute information already present in the file. 296×423 is ~125,000 pixels of information no matter what you run over it.
 
-**This cannot be fixed by sharpening.** Lanczos, unsharp mask, and every filter of that family only redistribute information that is already in the file — 296×423 is ~125,000 pixels of information no matter what you do to it.
-
-`quality` runs a super-resolution model instead, which *reconstructs* detail rather than interpolating between the pixels you have, then fits the result to your target platform's upload ceiling.
+`quality` uses super-resolution instead — a model that *reconstructs* plausible detail rather than interpolating between the pixels you have — so the image holds up when it's displayed large or zoomed into. It then fits the result within a size budget so it survives upload without being re-compressed.
 
 ---
 
@@ -81,7 +79,7 @@ sh install.sh
 
 </details>
 
-### Platforms
+### Supported systems
 
 | OS | x86_64 | arm64 |
 |---|---|---|
@@ -89,20 +87,19 @@ sh install.sh
 | macOS | ⚠️ source only | ✅ Apple Silicon |
 | Windows | ✅ | — |
 
+One self-contained binary. The 4.9 MB model is compiled into it — no Python, no ffmpeg, no ONNX Runtime install, no model download on first run.
+
 Two limits, both inherited from the prebuilt ONNX Runtime this links against rather than chosen:
 
 - **glibc 2.38+ on Linux** — Ubuntu 23.10+, Debian 13+, Fedora 39+. The runtime is built against 2.38, so older systems cannot link it. Ubuntu 22.04 is still LTS and is *not* covered; those users need to build from source against a locally built runtime.
 - **No Intel Mac binary.** `ort` publishes no prebuilt runtime for `x86_64-apple-darwin` — *"no prebuilt binaries available for target x86_64-apple-darwin"* — so there is nothing to ship. Apple Silicon is fully supported; Intel Mac users must build ONNX Runtime themselves.
-
-One self-contained binary. The 4.9 MB model is compiled into it — no Python, no ffmpeg, no ONNX Runtime install, no model download on first run.
 
 ---
 
 ## Usage
 
 ```sh
-quality shot.png                # -> shot-quality.webp, fitted for X
-quality shot.png -t bluesky     # 2000 px / 1 MB ceiling
+quality shot.png                # -> shot-quality.webp
 quality shot.png --png          # lossless PNG instead
 quality shot.png -i 40          # gentler ML effect
 quality shot.png -o out.webp    # explicit output path
@@ -118,7 +115,7 @@ output  1184x1692  0.09 MB  -> shot-quality.webp
 
 | Flag | Default | What it does |
 |------|---------|--------------|
-| `-t, --target` | `x` | Platform to fit: `x`, `mastodon`, `bluesky`, `instagram`, `none` |
+| `-t, --target` | `x` | Size budget preset to fit within — run `quality --help` for the list |
 | `-i, --intensity` | `60` | ML strength, 0–100. Lower is softer and closer to plain Lanczos |
 | `-s, --saturation` | `92` | Saturation percent; `100` leaves colour untouched |
 | `-q, --quality` | `90` | WebP quality |
@@ -126,17 +123,11 @@ output  1184x1692  0.09 MB  -> shot-quality.webp
 | `--tile` | `384` | Inference tile size. Lower it if you run out of memory |
 | `-o, --output` | `<input>-quality.webp` | Output path; extension picks the format |
 
-### Platform ceilings
+### Fitting a size budget
 
-| Target | Max long edge | Max file size |
-|---|---|---|
-| `x` / `twitter` | 4096 px | 5 MB |
-| `mastodon` | 4096 px | 8 MB |
-| `bluesky` | 2000 px | 1 MB |
-| `instagram` / `ig` | 1440 px | 8 MB |
-| `none` / `full` | unlimited | unlimited |
+Upload endpoints reject or silently re-compress images past a certain pixel dimension or file size, which undoes the point of the exercise. `--target` selects a preset pair of caps — a maximum long edge and a maximum file size — and the output is fitted to both. `quality --help` lists the presets; `--target none` disables fitting entirely.
 
-If the encoded file still lands over the size ceiling, `quality` says so and suggests a lower `--quality` rather than silently shipping something the platform will re-compress.
+If the encoded file still lands over its size cap, `quality` says so and suggests a lower `--quality` rather than silently handing you something that will be re-compressed.
 
 ---
 
@@ -148,7 +139,7 @@ If the encoded file still lands over the size ceiling, `quality` says so and sug
 
 **3. Saturation trim.** A small extra correction for the same effect, at 92%.
 
-**4. Fit and encode.** Downsample to the platform ceiling, then WebP (or PNG). The model always runs at full 4× first even when the target is smaller — downsampling a 4× result beats upscaling straight to the target, because it also averages away model artifacts.
+**4. Fit and encode.** Downsample to the size budget, then WebP (or PNG). The model always runs at full 4× first even when the budget is smaller — downsampling a 4× result beats upscaling straight to the target size, because it also averages away model artifacts.
 
 ### Performance
 
@@ -165,9 +156,9 @@ Roughly 25–30 s/megapixel on CPU. There is no GPU path.
 
 **It invents detail.** Super-resolution reconstructs *plausible* pixels, it does not recover real ones. For UI and text this is reliable — Latin and Arabic both reconstruct cleanly in testing — but don't use it where pixel-exact fidelity matters: evidence, measurement, diffing, anything a person will make a factual claim from.
 
-**WebP by default.** At q90 it measures 0.77% RMSE against lossless while being ~18× smaller. That difference is invisible, and it's what keeps a full-resolution 4096 px image at 0.20 MB instead of 3.58 MB — which is the difference between clearing Bluesky's 1 MB limit and not. Use `--png` if you want lossless.
+**WebP by default.** At q90 it measures 0.77% RMSE against lossless while being ~18× smaller. That difference is invisible, and it is what keeps a full-resolution 4096 px image around 0.20 MB instead of 3.58 MB — comfortably inside a tight size budget rather than well over it. Use `--png` if you want lossless.
 
-**The real fix is upstream.** If you set GNOME display scaling to 200%, apps render HiDPI and your screenshots contain *genuine* detail instead of reconstructed detail. Nothing downstream beats capturing the pixels for real. `quality` is for the screenshots you already took, and for when you don't want to run your desktop at 2×.
+**The real fix is upstream.** If your desktop renders at 2× (200% display scaling), applications draw at HiDPI and your screenshots contain *genuine* detail instead of reconstructed detail. Nothing downstream beats capturing the pixels for real. `quality` is for the screenshots you already took, and for when you don't want to run your desktop at 2×.
 
 **Why `ort` and not a pure-Rust runtime.** `tract` would have made this dependency-free, and it benchmarked at **314 s/MP against ort's ~25** — eight minutes for one 1780×873 screenshot. Not worth the purity.
 
